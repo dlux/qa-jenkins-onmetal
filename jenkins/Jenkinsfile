@@ -1,0 +1,78 @@
+// *******************************
+stage 'Pre-Deployment'
+// *******************************
+
+echo 'Provision an onMetal server and prepare it to run OSA'
+node('onmetal-provisioner') {
+    
+    String home = '/home/ubuntu/qa-jenkins-onmetal/'
+    String onmetal_ip
+
+    // Spin onMetal Server
+    sh '''
+    cd /home/ubuntu/qa-jenkins-onmetal/
+    sudo ansible-playbook build_onmetal.yaml --tags 'iad'
+    '''
+    // Verify onMetal server data
+    sh '''
+    cd /home/ubuntu/qa-jenkins-onmetal/
+    sudo ansible-playbook -i hosts get_onmetal_facts.yaml --tags 'iad'
+    '''
+    // Get server IP address
+    String hosts = readFile(home+'hosts').trim()
+    onmetal_ip = hosts.substring(hosts.indexOf('=')+1)
+    // Wait for server to become active
+    wait_for_ping(onmetal_ip)
+
+    retry(5) {
+        // Prepare OnMetal server
+        sh """
+        cd ${home}
+        sudo ansible-playbook -i hosts prepare_onmetal.yaml
+        """ 
+        // Sleep 3 seconds before trying again
+        sleep 3
+    }
+
+    // Apply CPU fix - will restart server (~5 min)
+    sh """
+    cd ${home}
+    sudo ansible-playbook -i hosts set_onmetal_cpu.yaml
+    """ 
+    
+    // Wait for the server to com back online
+    wait_for_ping(onmetal_ip)
+
+    // Configure VMs onMetal server
+    sh """
+    cd ${home}
+    sudo ansible-playbook -i hosts configure_onmetal.yaml
+    """
+    
+    sh """
+    cd ${home}
+    sudo ansible-playbook -i hosts create_lab.yaml
+    """
+
+    sh """
+    cd ${home}
+    sudo ansible-playbook -i hosts prepare_for_osa.yaml
+    """
+
+}
+
+
+def wait_for_ping(ip) {
+    
+    def response
+    def timeout = 360
+    def initial_time = System.currentTimeSeconds()
+    waitUntil {
+        if (System.currentTimeSeconds() - initial_time > timeout) {
+            error "The host did not respond to ping within the timeout of ${timeout} seconds"
+        }
+        response = sh returnStatus: true, script: "ping -q -c 1 ${ip}"
+        return (response == 0) 
+    }
+    
+}    
