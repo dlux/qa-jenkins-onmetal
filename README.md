@@ -1,9 +1,13 @@
 # qa-jenkins-onmetal
 ### OSIC Ops/QA Automation PoC for CI/CD
 
-### Jenkins Master Requirements
-*setup_master.yaml and setup_jenkins.yaml can facilitate requirements  
--- with the exception of cloud credentials --*
+This repository describes the installation of a full OpenStack deployment using a single OnMetal host from the Rackspace Public Cloud. This is a multi-node installation using VMs that have been PXE booted which was done to provide an environment that is almost exactly what is in production.
+
+Ansible scripts here can create a Rackspace OnMetal I/O v2 server build, prepare the OnMetal server, kick and deploy OpenStack using KVM, Cobbler, and OpenStack-Ansible within 15 VM Nodes(3 infra, 3 logging, 3 compute, 3 cinder, 3 swift).
+
+End to end flow is automated via jenkins pipeline (See jenkins/pipeline.groovy) which can be run on a Jenkins Agent Server.
+
+We assume a Jenkins master and Jenkins Agent servers are available (agent can be created on the fly - see below requirements -
 
 ##### Rackspace Public Cloud Credentials  
 _.raxpub_ file **in the repo directory** formatted like this:  
@@ -13,7 +17,11 @@ username = your-cloud.username
 api_key = e1b835d65f0311e6a36cbc764e00c842
 ```
 
-##### Packages
+##### Jenkins Agent
+
+OSIC QA prepares a jenkins agent from where the flow will start and has following dependencies installed:
+
+ Packages
 + apt-get
   + python-dev
   + build-essential
@@ -22,7 +30,6 @@ api_key = e1b835d65f0311e6a36cbc764e00c842
   + git
   + pkg-config
   + libvirt-dev
-  + jenkins
 + pip [ python <(curl -sk https://bootstrap.pypa.io/get-pip.py) ]
   + ansible >= 2.0
   + lxml
@@ -47,8 +54,11 @@ ansible-playbook setup_master.yaml
 ansible-playbook setup_jenkins.yaml
 ```
 
-##### Jenkins Pipeline (I think that is the right jargon)  
+##### Jenkins Pipeline
 tags available are _iad_ and _dfw_, **without** tags resources are created in **both** regions
+
+See also jenkins/pipeline.groovy
+
 ```shell
 # Confirmed
 ansible-playbook build_onmetal.yaml --tags 'iad'
