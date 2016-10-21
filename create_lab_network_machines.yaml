@@ -1,0 +1,38 @@
+---
+
+- name: "Create Lab Network Machines"
+  hosts: all
+  remote_user: root
+
+  tasks:
+    - name: "Check for state file"
+      stat: path=/root/.netconfig
+      register: netrunning
+
+    - name: "Create and start firewall VM"
+      shell: |
+        cd /root/rpcops-onmetal-labconfigurator/resources/edgedevices
+        cp /labshare/templates/edgedevices/firewall.tar.gz /var/lib/libvirt/images
+        tar xzf /var/lib/libvirt/images/firewall.tar.gz -C /var/lib/libvirt/images
+        virsh define firewall.xml
+        virsh start firewall
+      args:
+        executable: /bin/bash
+      when: netrunning.stat.exists == False
+
+    - name: "Create and start loadbalancer VM"
+      shell: |
+        cd /root/rpcops-onmetal-labconfigurator/resources/edgedevices
+        cp /labshare/templates/edgedevices/loadbalancer.tar.gz /var/lib/libvirt/images
+        tar xzf /var/lib/libvirt/images/loadbalancer.tar.gz -C /var/lib/libvirt/images
+        virsh define loadbalancer.xml
+        virsh start loadbalancer
+      args:
+        executable: /bin/bash
+      when: netrunning.stat.exists == False
+
+    - name: "Give network machines 30 seconds to boot"
+      pause: seconds=30
+
+    - name: "Create netconfig state file"
+      command: touch /root/.netconfig

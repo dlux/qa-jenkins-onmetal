@@ -1,6 +1,6 @@
 ---
 
-- name: "Destroy Lab Machines"
+- name: "Destroy Lab Network Machines"
   hosts: all
   remote_user: root
   gather_facts: false
@@ -20,21 +20,17 @@
         name: "{{ item }}"
         state: destroyed
         uri:  "{{ libvirt_host }}"
-      when: item != "loadbalancer" and item != "firewall"
+      when: item == "loadbalancer" or item == "firewall"
       with_items: "{{ vms.list_vms }}"
-
-    - name: "Remove all snapshots"
-      shell: "for i in `virsh list --all --name|awk '/infra|compute|storage|cinder|ceph|swift|object|logger|kolla/ { print }'`; \
-      do for j in `virsh snapshot-list --name $i`; do virsh snapshot-delete --domain $i --snapshotname $j; done; done"
 
     - name: "Remove all VMs"
       virt:
         name: "{{ item }}"
         command: undefine
         uri: "{{ libvirt_host }}"
-      when: item != "loadbalancer" and item != "firewall"
+      when: item == "loadbalancer" or item == "firewall"
       with_items: "{{ vms.list_vms }}"
 
     - name: "Remove all storage devices"
-      shell: "for a in `virsh vol-list --pool storage|awk '/infra|compute|storage|cinder|ceph|swift|object|logger|kolla/ { print $1 }'`; \
+      shell: "for a in `virsh vol-list --pool storage|awk '/loadbalancer|firewall/ { print $1 }'`; \
       do virsh vol-delete $a storage; done;"

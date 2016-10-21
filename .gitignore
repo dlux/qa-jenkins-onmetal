@@ -1,2 +1,5 @@
 hosts
 .raxpub
+*.pyc
+
+results.txt
