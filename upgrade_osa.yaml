@@ -15,12 +15,14 @@
         recursive: yes
         version: "{{ openstack_release }}"
       tags:
-        - chekout-version
+        - chekout-release
        
     - name: Run Upgrade.sh
       shell: export TERM=xterm; echo 'YES' | I_REALLY_KNOW_WHAT_I_AM_DOING=true scripts/run-upgrade.sh
+      register: task_result
       args:
-        chdir: /opt/openstack-ansible/
+        chdir: /opt/openstack-ansible
+      until: task_result.rc == 0
       retries: 3
       tags:
         - run-upgrade

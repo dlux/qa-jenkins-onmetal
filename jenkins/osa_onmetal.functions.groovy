@@ -161,7 +161,7 @@ def configure_tempest() {
     testr init
     cd /root/tempest/etc/
     wget https://raw.githubusercontent.com/osic/qa-jenkins-onmetal/master/jenkins/tempest.conf
-    mkdir /root/subunit
+    mkdir -p /root/subunit
     '''
     """
 
@@ -177,7 +177,7 @@ def configure_tempest() {
     // Configure tempest based on the OSA deployment
     sh """
     ssh -o StrictHostKeyChecking=no root@${host_ip} '''
-    keys="admin_password image_ref image_ref_alt uri uri_v3 public_network_id reseller_admin_role"
+    keys="admin_password image_ref image_ref_alt uri uri_v3 public_network_id"
     for key in \$keys
     do
         a="\${key} ="
@@ -191,12 +191,14 @@ def configure_tempest() {
 }
 
 
-def run_tempest_smoke_tests(results_file = 'results') {
+def run_tempest_smoke_tests(results_file = 'results', elasticsearch_ip = null) {
 
     String host_ip = get_onmetal_ip()
+    String newline = "\n"
+    def tempest_output, failures
 
     // Run the tests and store the results in ~/subunit/before
-    sh """
+    tempest_output = sh returnStdout: true, script: """
     ssh -o StrictHostKeyChecking=no root@${host_ip} '''
     cd /root/tempest/
     stream_id=`cat .testrepository/next-stream`
@@ -205,6 +207,27 @@ def run_tempest_smoke_tests(results_file = 'results') {
     cp .testrepository/\$stream_id /root/subunit/smoke/${results_file}
     '''
     """
+    // Make sure there are no failures in the smoke tests, if there are stop the workflow
+    println tempest_output
+    if (tempest_output.contains('- Failed:') == true) {
+
+	failures = tempest_output.substring(tempest_output.indexOf('- Failed:') + 10)
+        failures = failures.substring(0,failures.indexOf(newline)).toInteger()
+        if (failures > 1) {
+	    println 'Parsing failed smoke'
+            if (elasticsearch_ip != null) {
+	        aggregate_parse_failed_smoke(host_ip, results_file, elasticsearch_ip)
+            }
+            error "${failures} tests from the Tempest smoke tests failed, stopping the pipeline."
+        } else {
+            println 'The Tempest smoke tests were successfull.'
+        }
+
+    } else {
+
+        error 'There was an error running the smoke tests, stopping the pipeline.'
+
+    }
     
 }
 
@@ -241,7 +264,7 @@ def install_persistent_resources_tests() {
     String host_ip = get_onmetal_ip()
 
     // Install Persistent Resources tests on the onMetal host
-    echo 'Installing Persisten Resources Tempest Plugin on the onMetal host'
+    echo 'Installing Persistent Resources Tempest Plugin on the onMetal host'
     sh """
     ssh -o StrictHostKeyChecking=no root@${host_ip} '''
     git clone https://github.com/osic/persistent-resources-tests.git /root/persistent-resources-tests
@@ -275,36 +298,39 @@ def run_persistent_resources_tests(action = 'verify', results_file = null) {
 
 
 def install_during_upgrade_tests() {
-    
+
     String host_ip = get_onmetal_ip()
 
     // Setup during tests
     sh """
     ssh -o StrictHostKeyChecking=no  root@${host_ip} '''
+    mkdir -p /root/output
     git clone https://github.com/osic/rolling-upgrades-during-test
     cd rolling-upgrades-during-test
     pip install -r requirements.txt
     '''
     """
+
 }
 
 
 def start_during_test() {
-    
+
     String host_ip = get_onmetal_ip()
     
     // Run during test
     sh """
     ssh -o StrictHostKeyChecking=no root@${host_ip} '''
-    cd during-upgrade-tests
-    python call_test.py -t 1
-    '''
+    cd rolling-upgrades-during-test
+    python call_test.py -d
+    ''' &
     """ 
+
 }
 
 
 def stop_during_test() {
-    
+
     String host_ip = get_onmetal_ip()
 
     // Stop during test by creating during.uptime.stop
@@ -313,54 +339,56 @@ def stop_during_test() {
     sudo touch /usr/during.uptime.stop
     '''
     """
+
 }
 
 
-def aggregate_results() {
-
-    String host_ip = get_onmetal_ip()
+def aggregate_results(host_ip) {
 
     //Pull persistent, during, api, smoke results from onmetal to ES vm
     sh """
     scp -o StrictHostKeyChecking=no -r root@${host_ip}:/root/output/ /home/ubuntu/
     scp -o StrictHostKeyChecking=no -r root@${host_ip}:/root/subunit/ /home/ubuntu/
     """
+
 }
 
 
-def setup_api_uptime_tests() {
+def install_api_uptime_tests() {
 
-    host_ip = get_onmetal_ip()
+    String host_ip = get_onmetal_ip()
 
     // setup api uptime tests
     sh """
     ssh -o StrictHostKeyChecking=no  root@${host_ip} '''
-    git clone https://github.com/osic/api-uptime-tests
-    cd api-uptime-tests
+    mkdir -p /root/output
+    git clone https://github.com/osic/api_uptime.git
+    cd api_uptime
     pip install -r requirements.txt
     '''
     """
+
 }
 
 
 def start_api_uptime_tests() {
 
-    host_ip = get_onmetal_ip()
-
-    // run the API uptime tests
+    String host_ip = get_onmetal_ip()
+	
     sh """
     ssh -o StrictHostKeyChecking=no root@${host_ip} '''
     sudo rm -f /usr/api.uptime.stop
-    cd api-uptime-tests/api_uptime
-    python call_test.py -v
-    '''
+    cd api_uptime/api_uptime
+    python call_test.py -v -d -s nova,swift -o /root/output/api.uptime.out
+    ''' &
     """
+
 }
 
 
 def stop_api_uptime_tests() {
 
-    host_ip = get_onmetal_ip()
+    String host_ip = get_onmetal_ip()
 
     // stop the API uptime tests
     sh """
@@ -368,9 +396,77 @@ def stop_api_uptime_tests() {
     sudo touch /usr/api.uptime.stop
     '''
     """
+
+}
+
+def setup_parse_persistent_resources(){
+    
+    String host_ip = get_onmetal_ip()
+    
+    sh """
+    ssh -o StrictHostKeyChecking=no root@${host_ip} '''
+    git clone https://github.com/osic/persistent-resources-tests-parse.git /root/persistent-resources-tests-parse
+    pip install /root/persistent-resources-tests-parse/
+    '''
+    """
+
+}
+
+def parse_persistent_resources_tests(){
+    
+    String host_ip = get_onmetal_ip()
+
+    sh """
+    ssh -o StrictHostKeyChecking=no root@${host_ip} '''
+    cd /root/subunit/persistent_resources/
+    resource-parse --u . > /root/output/persistent_resource.txt
+    rm *.csv
+    '''
+    """
+
+}
+
+def aggregate_parse_failed_smoke(host_ip, results_file, elasticsearch_ip) {
+
+    //Pull persistent, during, api, smoke results from onmetal to ES vm
+    sh """
+    ssh -o StrictHostKeyChecking=no ubuntu@${elasticsearch_ip} '''
+    scp -o StrictHostKeyChecking=no -r root@${host_ip}:/root/output/ /home/ubuntu/
+    scp -o StrictHostKeyChecking=no -r root@${host_ip}:/root/subunit/ /home/ubuntu/
+    git clone https://github.com/osic/elastic-benchmark
+    sudo pip install -e elastic-benchmark
+    '''
+    """
+
+	if (results_file == 'after_upgrade') {
+	    //Pull persistent, during, api, smoke results from onmetal to ES 
+	    sh """
+            ssh -o StrictHostKeyChecking=no ubuntu@${elasticsearch_ip} '''
+	    elastic-upgrade -u /home/ubuntu/output/api.uptime.out -d /home/ubuntu/output/during_output.txt -p /home/ubuntu/output/persistent_resource.txt -b /home/ubuntu/subunit/smoke/before_upgrade -a /home/ubuntu/subunit/smoke/after_upgrade
+	    ''''
+	    """
+	}
+	else {
+	    sh """
+            ssh -o StrictHostKeyChecking=no ubuntu@${elasticsearch_ip} '''
+	    elastic-upgrade -b /home/ubuntu/subunit/smoke/before_upgrade
+	    '''
+	    """
+	}
+
+}
+
+
+def parse_results() {
+	
+    sh """
+    git clone https://github.com/osic/elastic-benchmark
+    sudo pip install -e elastic-benchmark
+    elastic-upgrade -u /home/ubuntu/output/api.uptime.out -d /home/ubuntu/output/during_output.txt -p /home/ubuntu/output/persistent_resource.txt -b /home/ubuntu/subunit/smoke/before_upgrade -a /home/ubuntu/subunit/smoke/after_upgrade
+    """
+
 }
 
 
 // The external code must return it's contents as an object
 return this;
-

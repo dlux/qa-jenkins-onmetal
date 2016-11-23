@@ -2,7 +2,7 @@
 
 def osa, common
 String workspace_dir 
-String onmetal_ip
+String onmetal_ip, elasticsearch_ip, elasticsearch_pkey
 
 // Jenkins must provide these two variables as parameters or the build 
 // will fail:
@@ -32,6 +32,14 @@ node('master') {
     
 }
 
+node('elasticsearch') {
+
+    // Get the server information
+    elasticsearch_ip = common.get_server_ip()
+    elasticsearch_pkey = common.get_server_public_key()
+
+}
+
 node('onmetal-provisioner') {
 
     // Wait for the agent to finish running cloud-init
@@ -53,6 +61,9 @@ node('onmetal-provisioner') {
 
     // Prepare the VMs to run OpenStack
     osa.vm_preparation_for_osa(from_release)
+
+    // Add the elasticsearch public key to the deployed onmetal host
+    common.add_key_to_server(onmetal_ip, elasticsearch_pkey)
 
 }
 
@@ -81,7 +92,7 @@ echo 'Validating the OpenStack deployment'
 node('onmetal-provisioner') {
 
     // Run the tempest tests
-    osa.run_tempest_smoke_tests('before_upgrade')
+    osa.run_tempest_smoke_tests('before_upgrade', elasticsearch_ip)
 
     // Install and run the persistent resources creation
     osa.install_persistent_resources_tests()
@@ -100,14 +111,15 @@ node('onmetal-provisioner') {
     //Setup during upgrade test
     osa.install_during_upgrade_tests()
     
-    //Start During Upgrade Test
-    osa.start_during_test()
-
     // Setup API uptime tests
     osa.install_api_uptime_tests()
-    
+
+    //Start During Upgrade Test
+    osa.start_during_test()
+  
     // Start API uptime tests
     osa.start_api_uptime_tests()
+
 }
 
 
@@ -135,6 +147,7 @@ node('onmetal-provisioner') {
 
     // Stop API uptime tests
     osa.stop_api_uptime_tests()  
+
 }
 
 
@@ -146,20 +159,27 @@ echo 'Validating the OpenStack deployment after the upgrade'
 node('onmetal-provisioner') {
  
     // Run the tempest tests
-    osa.run_tempest_smoke_tests('after_upgrade')
+    osa.run_tempest_smoke_tests('after_upgrade', elasticsearch_ip)
 
     // Run the persistent resources validation then clean them up
     osa.run_persistent_resources_tests('verify', 'after_upgrade')
-    osa.run_persistent_resources_tests('cleanup')
-    
+    osa.run_persistent_resources_tests('cleanup')    
+
 }
 
 
 // *******************************
 stage 'Reporting'
 // *******************************
-echo 'To be defined further'
 
+echo 'Parsing the test results and submitting them to ElasticSearch'
+node('onmetal-provisioner'){
+    
+    // Pase persistent resource results
+    osa.setup_parse_persistent_resources()
+    osa.parse_persistent_resources_tests()
+
+}
 
 node('elasticsearch'){
     
@@ -167,6 +187,7 @@ node('elasticsearch'){
     osa.aggregate_results(onmetal_ip)
 
     //Push data to ES
+    osa.parse_results()
     
 }
 
